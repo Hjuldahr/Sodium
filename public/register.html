@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Sodium • Sign Up</title>
+        <link rel="stylesheet" href="css/register.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/zxcvbn/4.4.2/zxcvbn.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js"></script>
+        <script src="js/register.js" defer></script>
+    </head>
+    <body>
+        <form>
+            <label for="user">Username</label><br>
+            <input type="text" id="user" name="user" required><br><br>
+            <label for="email">Email</label><br>
+            <input type="email" id="email" name="email" required><br><br>
+            <label for="password">Password</label><br>
+            <input type="password" id="password" name="password" minlength="12" required><br>
+            <meter id="password_strength_meter" min="0" max="4" low="2" high="3" optimum="4"></meter>
+            <span id="password_strength_text">Weak</span><br><br>
+            <label for="password_confirm">Confirm Password</label><br>
+            <input type="password" id="password_confirm" name="password_confirm" required><br><br>
+            <input type="submit" id="submit" value="Continue">
+            <input type="reset" value="Clear All">
+        </form>
+        <button onclick="window.location.href='login.html'">Sign In</button>
+        <button onclick="window.location.href='index.html'">Back</button>
+    </body>
+</html>
