@@ -1,25 +1,29 @@
 * (leading or trailing wildcard)
 ? (single character wildcard)
-[&] (intersect)
-[|] (union)
-- (except)
-# (search by numeric DB ID instead of string)
-! (exact criteria match)
-< (less than)
-> (greater than)
-= (pairing)
+(_&_) (intersect set)
+(_|_) (union set)
+-(_) (exclusive set)
+!(_) (exact set)
+#_ (search by numeric DB ID instead of string)
+<_ (less than)
+>_ (greater than)
+_:_ (criteria pairing)
+_._ (criteria attribute instead of its label or id)
 
-space delimited
-ex: "user=hjuldahr time=<20260114 genre=fantasy -species=[fox|wolf]"
+space delimited, filters applied left to right sequentially
+
+ex: "user:hjuldahr time:<20260114 genre:fantasy species:-(fox|wolf)"
 Search for posts by the user 'hjuldahr' posted after the timestamp 20260114 in the fantasy genre not featuring foxes or wolves
 
-ex: "post=#10339"
+ex: "post:#10339"
+ex: "post.id:10339" id is implicit when using #_
 Search for this post ID specifically 
 
-ex: "character=[karishad&keene_milton]"
+ex: "character:!(karishad&keene_milton)"
 Search for posts featuring only these two characters
 
-ex: "character=*(housepets)"
+ex: "character:*(housepets)"
+ex: "character.label:*(housepets)" label is implicit by default
 Include any character that has the Housepets comic disambiguation (added manually by a user in parentheses)
 
-Ideally, it should work for most DB columns (i.e. "tag_popularity>100" or "tag_shunning<10" to filter out controversial tags)
+Ideally, it should work for most DB columns (i.e. "tag.popularity:>100" or "tag.shunning:<10" either can filter out controversial tags by their attributes)

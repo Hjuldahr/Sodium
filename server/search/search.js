@@ -1,117 +1,199 @@
-// search.js
-const searchSchema = {
-    user: { table: 'users', column: 'user_name', type: 'string', join: 'posts.user_id = users.user_id' },
-    time: { table: 'posts', column: 'created_at', type: 'numeric' },
-    genre: { table: 'genres', column: 'genre_label', type: 'string', join: 'posts.genre_id = genres.genre_id' },
-    tag: { table: 'tags', column: 'tag_label', type: 'string', join: 'posts.post_id = post_tags.post_id', joinTable: 'post_tags', joinColumn: 'tag_id', refColumn: 'tag_id' },
-    character: { table: 'characters', column: 'character_label', type: 'string', join: 'posts.post_id = post_characters.post_id', joinTable: 'post_characters', joinColumn: 'character_id', refColumn: 'character_id' },
-    post: { table: 'posts', column: 'post_id', type: 'numeric' },
-    tag_popularity: { table: 'tags', column: 'tag_popularity', type: 'numeric' },
-    tag_shunning: { table: 'tags', column: 'tag_shunning', type: 'numeric' }
-};
+// searchPosts.js
+const db = require('./db');
 
-// Convert DSL wildcard to SQL LIKE pattern
-function wildcardToLike(pattern) {
-    pattern = pattern.replace(/\*/g, '%').replace(/\?/g, '_');
-    return pattern;
+// --- Regex for token parsing ---
+const TOKEN_REGEX = /(?<scope>[a-z_]+)(?:\.(?<attr>[a-z_]+))?:(?<value>.+)/i;
+
+// --- Wildcard translator ---
+function sqlLike(pattern) {
+    return pattern.replace(/\*/g, '%').replace(/\?/g, '_');
 }
 
-// Parse a single filter: key=value
-function parseFilter(filterStr) {
-    let negated = false;
-    if (filterStr.startsWith('-')) {
-        negated = true;
-        filterStr = filterStr.slice(1);
-    }
-
-    const [rawKey, rawValue] = filterStr.split('=');
-    if (!rawKey || rawValue === undefined) return null;
-
-    const key = rawKey.trim();
-    const schema = searchSchema[key];
-    if (!schema) return null;
-
-    // Handle numeric operators
-    const numericMatch = rawValue.match(/^([<>]=?|=)?(.+)$/);
-    let operator = '=', value = rawValue;
-    if (numericMatch) {
-        if (schema.type === 'numeric') {
-            operator = numericMatch[1] || '=';
-            value = numericMatch[2];
-        }
-    }
-
-    // Handle exact string match
-    let patterns = [];
-    if (schema.type === 'string') {
-        let val = rawValue;
-
-        // exact match (!value)
-        if (val.startsWith('!')) {
-            patterns.push({ like: val.slice(1), exact: true });
-        }
-        // intersect/union brackets
-        else if (val.startsWith('[') && val.endsWith(']')) {
-            val = val.slice(1, -1);
-            const parts = val.split(/[&|]/);
-            const op = val.includes('&') ? '&' : '|';
-            parts.forEach(p => patterns.push({ like: wildcardToLike(p), op }));
-        } else {
-            patterns.push({ like: wildcardToLike(val) });
-        }
-    }
-
-    return { key, schema, operator, value, patterns, negated };
+// --- Split & detect set operators ---
+function splitSet(str) {
+    if (str.includes('&')) return { op: 'AND', values: str.split('&') };
+    if (str.includes('|')) return { op: 'OR', values: str.split('|') };
+    return { op: 'SINGLE', values: [str] };
 }
 
-// Build SQL and parameters
-function buildSQL(queryStr) {
-    const filters = queryStr.split(/\s+/).map(f => parseFilter(f)).filter(Boolean);
+// --- Resolve implicit attributes based on scope & value ---
+function resolveAttribute(scope, value) {
+    const isID = typeof value === 'number' || (typeof value === 'string' && value.startsWith('#'));
+    switch (scope) {
+        case 'tag': return isID ? 'tag_id' : 'label';
+        case 'character': return isID ? 'character_id' : 'label';
+        case 'species': return isID ? 'species_id' : 'label';
+        case 'genre': return isID ? 'genre_id' : 'label';
+        case 'post': return isID ? 'post_id' : 'title';
+        case 'user': return isID ? 'user_id' : 'user_name';
+        default: return 'label';
+    }
+}
 
-    let joins = new Set(['posts p']); // always start from posts
-    let where = [];
-    let params = [];
+// --- Parse individual value tokens ---
+function parseValue(raw) {
+    if (raw.startsWith('#')) {
+        return { type: 'id', value: Number(raw.slice(1)) };
+    }
+    if (/^[<>]=?/.test(raw)) {
+        const [, op, num] = raw.match(/^(<=|>=|<|>)(\d+)/);
+        return { type: 'compare', comparator: op, value: Number(num) };
+    }
+    if (raw.startsWith('!(') && raw.endsWith(')')) {
+        return { type: 'exact', ...splitSet(raw.slice(2, -1)) };
+    }
+    if (raw.startsWith('-(') && raw.endsWith(')')) {
+        return { type: 'exclude', ...splitSet(raw.slice(2, -1)) };
+    }
+    // default pattern match
+    return { type: 'pattern', value: raw };
+}
 
-    for (const f of filters) {
-        const s = f.schema;
+// --- Apply a scope-specific filter to the SQL context ---
+function applyFilter(scope, attr, filter, ctx) {
+    switch (scope) {
+        case 'genre':
+            ctx.joins.add(`JOIN genres g ON g.genre_id = p.genre_id`);
+            if (filter.type === 'pattern') {
+                ctx.where.push(`g.${attr} LIKE ?`);
+                ctx.params.push(sqlLike(filter.value));
+            } else if (filter.type === 'id') {
+                ctx.where.push(`g.${attr} = ?`);
+                ctx.params.push(filter.value);
+            }
+            break;
+        case 'tag':
+            ctx.joins.add(`
+                JOIN post_tags pt ON pt.post_id = p.post_id
+                JOIN tags t ON t.tag_id = pt.tag_id
+            `);
+            if (filter.type === 'pattern') {
+                ctx.where.push(`t.${attr} LIKE ?`);
+                ctx.params.push(sqlLike(filter.value));
+            } else if (filter.type === 'id') {
+                ctx.where.push(`t.${attr} = ?`);
+                ctx.params.push(filter.value);
+            } else if (filter.type === 'compare') {
+                ctx.where.push(`t.${attr} ${filter.comparator} ?`);
+                ctx.params.push(filter.value);
+            } else if (filter.type === 'exclude') {
+                const placeholders = filter.values.map(() => '?').join(',');
+                ctx.where.push(`
+                    p.post_id NOT IN (
+                        SELECT pt2.post_id
+                        FROM post_tags pt2
+                        JOIN tags t2 ON t2.tag_id = pt2.tag_id
+                        WHERE t2.${attr} IN (${placeholders})
+                    )
+                `);
+                ctx.params.push(...filter.values);
+            } else if (filter.type === 'exact') {
+                const placeholders = filter.values.map(() => '?').join(',');
+                ctx.where.push(`
+                    p.post_id IN (
+                        SELECT pt3.post_id
+                        FROM post_tags pt3
+                        JOIN tags t3 ON t3.tag_id = pt3.tag_id
+                        WHERE t3.${attr} IN (${placeholders})
+                        GROUP BY pt3.post_id
+                        HAVING COUNT(DISTINCT t3.${attr}) = ${filter.values.length}
+                    )
+                `);
+                ctx.params.push(...filter.values);
+            }
+            break;
 
-        // Add join if needed
-        if (s.join) joins.add(`${s.table} ${s.table} ON ${s.join}`);
+        case 'character':
+            ctx.joins.add(`
+                JOIN post_characters pc ON pc.post_id = p.post_id
+                JOIN characters c ON c.character_id = pc.character_id
+            `);
+            if (filter.type === 'pattern') {
+                ctx.where.push(`c.${attr} LIKE ?`);
+                ctx.params.push(sqlLike(filter.value));
+            } else if (filter.type === 'id') {
+                ctx.where.push(`c.${attr} = ?`);
+                ctx.params.push(filter.value);
+            } else if (filter.type === 'exclude') {
+                const placeholders = filter.values.map(() => '?').join(',');
+                ctx.where.push(`
+                    p.post_id NOT IN (
+                        SELECT pc2.post_id
+                        FROM post_characters pc2
+                        JOIN characters c2 ON c2.character_id = pc2.character_id
+                        WHERE c2.${attr} IN (${placeholders})
+                    )
+                `);
+                ctx.params.push(...filter.values);
+            } else if (filter.type === 'exact') {
+                const placeholders = filter.values.map(() => '?').join(',');
+                ctx.where.push(`
+                    p.post_id IN (
+                        SELECT pc3.post_id
+                        FROM post_characters pc3
+                        JOIN characters c3 ON c3.character_id = pc3.character_id
+                        WHERE c3.${attr} IN (${placeholders})
+                        GROUP BY pc3.post_id
+                        HAVING COUNT(DISTINCT c3.${attr}) = ${filter.values.length}
+                    )
+                `);
+                ctx.params.push(...filter.values);
+            }
+            break;
 
-        // Handle numeric
-        if (s.type === 'numeric') {
-            const cond = `${s.table}.${s.column} ${f.operator} ?`;
-            where.push(f.negated ? `NOT (${cond})` : cond);
-            params.push(f.value);
-        }
+        case 'post':
+            if (filter.type === 'id') {
+                ctx.where.push(`p.${attr} = ?`);
+                ctx.params.push(filter.value);
+            } else if (filter.type === 'pattern') {
+                ctx.where.push(`p.${attr} LIKE ?`);
+                ctx.params.push(sqlLike(filter.value));
+            }
+            break;
 
-        // Handle string / pattern
-        else if (s.type === 'string') {
-            const patternConds = f.patterns.map(p => {
-                if (p.exact) return `${s.table}.${s.column} = ?`;
-                return `${s.table}.${s.column} LIKE ?`;
-            });
-            const combined = patternConds.join(' AND '); // default intersection for multiple
-            where.push(f.negated ? `NOT (${combined})` : `(${combined})`);
-            f.patterns.forEach(p => params.push(p.exact ? p.like : `%${p.like}%`));
-        }
+        case 'user':
+            ctx.joins.add(`JOIN users u ON u.user_id = p.user_id`);
+            if (filter.type === 'id') {
+                ctx.where.push(`u.${attr} = ?`);
+                ctx.params.push(filter.value);
+            } else if (filter.type === 'pattern') {
+                ctx.where.push(`u.${attr} LIKE ?`);
+                ctx.params.push(sqlLike(filter.value));
+            }
+            break;
+
+        default:
+            // fallback, ignore unknown scope
+            break;
+    }
+}
+
+// --- Main function ---
+function searchPosts(queryString) {
+    const tokens = queryString.split(/\s+/);
+    const ctx = { joins: new Set(), where: [], params: [] };
+
+    for (const token of tokens) {
+        const match = TOKEN_REGEX.exec(token);
+        if (!match) continue;
+
+        let { scope, attr, value } = match.groups;
+        const parsed = parseValue(value);
+        attr = attr || resolveAttribute(scope, parsed.type === 'id' ? parsed.value : parsed.value);
+        applyFilter(scope, attr, parsed, ctx);
     }
 
-    const joinStr = Array.from(joins).join(' JOIN ');
-    const whereStr = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const sql = `
+        SELECT DISTINCT p.*
+        FROM posts p
+        ${[...ctx.joins].join('\n')}
+        ${ctx.where.length ? 'WHERE ' + ctx.where.join(' AND ') : ''}
+        ORDER BY p.created_at DESC
+        LIMIT 100
+    `;
 
-    const sql = `SELECT DISTINCT p.* FROM ${joinStr} ${whereStr} LIMIT 100`;
-    return { sql, params };
+    const rows = db.prepare(sql).all(...ctx.params);
+    return rows;
 }
 
-// Example usage
-if (require.main === module) {
-    const query = "user=hjuldahr time=>20260114 genre=fantasy -species=[fox|wolf]";
-    const { sql, params } = buildSQL(query);
-    console.log(sql);
-    console.log(params);
-}
-
-module.exports = {
-    buildSQL
-};
+module.exports = { searchPosts };
