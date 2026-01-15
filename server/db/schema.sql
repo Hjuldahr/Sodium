@@ -83,10 +83,20 @@ CREATE TABLE posts (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     last_viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    n_views INT NOT NULL DEFAULT 0,
+    n_total_views INT NOT NULL DEFAULT 0,
+    n_unique_views INT NOT NULL DEFAULT 0,
     n_favourite INT NOT NULL DEFAULT 0,
     score INT NOT NULL DEFAULT 0,
     FOREIGN KEY (author_id) REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+-- Used to track unique views from users
+CREATE TABLE post_views (
+    post_id INT,
+    viewer_id INT,
+    viewed_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (post_id) REFERENCES posts(post_id) ON DELETE CASCADE,
+    FOREIGN KEY (viewer_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
 CREATE TABLE post_votes (
@@ -94,7 +104,6 @@ CREATE TABLE post_votes (
     voter_id INT,
     polarity TINYINT NOT NULL,
     voted_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (post_id, voter_id),
     FOREIGN KEY (post_id) REFERENCES posts(post_id) ON DELETE CASCADE,
     FOREIGN KEY (voter_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
@@ -102,7 +111,6 @@ CREATE TABLE post_votes (
 CREATE TABLE post_tags (
     post_id INT,
     tag_id INT,
-    PRIMARY KEY (post_id, tag_id),
     FOREIGN KEY (post_id) REFERENCES posts(post_id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
 );
@@ -110,7 +118,6 @@ CREATE TABLE post_tags (
 CREATE TABLE post_themes (
     post_id INT,
     theme_id INT,
-    PRIMARY KEY (post_id, theme_id),
     FOREIGN KEY (post_id) REFERENCES posts(post_id) ON DELETE CASCADE,
     FOREIGN KEY (theme_id) REFERENCES themes(theme_id) ON DELETE CASCADE
 );
@@ -118,7 +125,6 @@ CREATE TABLE post_themes (
 CREATE TABLE post_characters (
     post_id INT,
     character_id INT,
-    PRIMARY KEY (post_id, character_id),
     FOREIGN KEY (post_id) REFERENCES posts(post_id) ON DELETE CASCADE,
     FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
 );
@@ -171,7 +177,18 @@ CREATE TABLE collections (
     title VARCHAR(100),
     description TEXT,
     score INT NOT NULL DEFAULT 0,
+    n_total_views INT NOT NULL DEFAULT 0,
+    n_unique_views INT NOT NULL DEFAULT 0,
     FOREIGN KEY (collector_id) REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+-- Used to track unique views from users
+CREATE TABLE collection_views (
+    collection_id INT,
+    viewer_id INT,
+    viewed_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE CASCADE,
+    FOREIGN KEY (viewer_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
 CREATE TABLE collection_votes (
@@ -179,7 +196,6 @@ CREATE TABLE collection_votes (
     voter_id INT,
     polarity TINYINT NOT NULL,
     voted_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (collection_id, voter_id),
     FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE CASCADE,
     FOREIGN KEY (voter_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
@@ -691,6 +707,43 @@ BEGIN
     UPDATE taxonomy
     SET n_favourite = GREATEST(COALESCE(n_favourite,0) - 1, 0)
     WHERE taxonomy_id = OLD.theme_id;
+END//
+
+-- ======================
+-- POST VIEWS
+-- ======================
+
+-- because its an insert trigger, updates setting it to null won't break the count
+-- additionally, if the id does become null, its because the user was deleted, meaning the id shouldn't get inserted again anyway
+CREATE TRIGGER trg_post_views_before_insert
+BEFORE INSERT ON post_views
+FOR EACH ROW
+BEGIN
+    -- Only check for logged-in users
+    IF NEW.viewer_id IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 
+            FROM post_views 
+            WHERE post_id = NEW.post_id 
+              AND viewer_id = NEW.viewer_id
+        ) THEN
+            -- Block duplicate insert
+            UPDATE posts
+            SET n_total_views = COALESCE(n_total_views,0) + 1
+            WHERE post_id = NEW.post_id;
+            SIGNAL SQLSTATE '45000' 
+                SET MESSAGE_TEXT = 'Duplicate view for this user'
+        END IF;
+    END IF;
+END//
+
+CREATE TRIGGER trg_post_views_after_insert
+AFTER INSERT ON post_views
+FOR EACH ROW
+BEGIN
+    UPDATE posts
+    SET n_total_views = COALESCE(n_total_views,0) + 1, n_unique_views = COALESCE(n_unique_views,0) + 1
+    WHERE post_id = NEW.post_id;
 END//
 
 -- ======================

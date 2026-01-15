@@ -1,0 +1,20 @@
+.primary_author_link a {
+    color: orangered;
+    padding: 5px;
+    text-decoration: none
+}
+.secondary_author_link a {
+    color: coral;
+    padding: 5px;
+    text-decoration: none
+}
+#theme_section a {
+    color: cornflowerblue;
+    padding: 5px;
+    text-decoration: none
+}
+#tag_section a {
+    color: cadetblue;
+    padding: 5px;
+    text-decoration: none
+}
