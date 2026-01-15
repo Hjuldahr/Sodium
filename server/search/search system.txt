@@ -1,29 +1,70 @@
-* (leading or trailing wildcard)
-? (single character wildcard)
-(_&_) (intersect set)
-(_|_) (union set)
--(_) (exclusive set)
-!(_) (exact set)
-#_ (search by numeric DB ID instead of string)
-<_ (less than)
->_ (greater than)
-_:_ (criteria pairing)
-_._ (criteria attribute instead of its label or id)
+Search terms, resolved left to right 
+Use ',' for chaining
+Ex: 'id:100,200,300'
+Use '~' prefix for optional
+Ex: '~cat ~dog' --either cat or dog
+Use '-' prefix for exclusion
+Ex: '-user:bob' --not the user bob
+Use '*' for leading to trailing wildcard
+Ex: 'red_*' or '*_wolf'
+Use '...' for ranges
+Ex: 'score:45...80'
+Use '+' suffix for above
+Ex: 'score:45+' --score of 45 or above
+Use '-' suffix for below
+Ex: 'score:33-' --score of 33 or below
 
-space delimited, filters applied left to right sequentially
+default is tag searching
 
-ex: "user:hjuldahr time:<20260114 genre:fantasy species:-(fox|wolf)"
-Search for posts by the user 'hjuldahr' posted after the timestamp 20260114 in the fantasy genre not featuring foxes or wolves
+user: --posts created by user
+fav: --posts favourited by user
+comment: --posts commented on by user
+vote: --posts voted on by user
+up: --posts up voted on by user
+down: --posts down voted on by user
 
-ex: "post:#10339"
-ex: "post.id:10339" id is implicit when using #_
-Search for this post ID specifically 
+id: --posts with id
+score: --posts with score count
+n_fav: --posts with favourite count
+n_comment: --posts with comment count
+n_tag: --posts with tag count
+n_char: --posts with character count
+n_theme: --posts with theme count
+n_view: --posts with view count
 
-ex: "character:!(karishad&keene_milton)"
-Search for posts featuring only these two characters
+rating:s rating:safe --posts depicting SFW content
+rating:m rating:mature --posts that depict artistic nudity and suggestive activities (borderline NSFW)
+rating:a rating:adult --posts that depict explicit sexual intercourse or sensitive subjects (such as PTSD) 
 
-ex: "character:*(housepets)"
-ex: "character.label:*(housepets)" label is implicit by default
-Include any character that has the Housepets comic disambiguation (added manually by a user in parentheses)
+format: --posts with a specific image format
 
-Ideally, it should work for most DB columns (i.e. "tag.popularity:>100" or "tag.shunning:<10" either can filter out controversial tags by their attributes)
+height: --posts with an image with a specific pixel height
+width: --posts with an image with a specific pixel width
+ratio: --posts with an image with a specific height / width ratio approximated within 2 decimal places.
+file_size: --posts with an image with a specific size measured in kilobytes
+
+created: --posts posted at a particular creation time (date posted)
+visited: --posts posted at a particular access time (date last clicked on)
+updated: --posts posted at a particular modification time (date laste updated)
+
+title: --posts with a particular title
+desc: --posts with a particular description
+theme: --posts with a particular theme
+
+order:id
+order:score
+order:n_tag
+order:n_fav
+order:n_char
+order:n_theme
+order:n_view
+order:n_comment
+order:title
+order:creation
+order:visiting
+order:updating
+order:file_size
+order:res --pixel resolution
+
+suffix with asc to switch from descending to ascending
+ex "order:score asc" --lowest score first
